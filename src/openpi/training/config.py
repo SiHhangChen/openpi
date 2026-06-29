@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import dataclasses
 import difflib
 import logging
+import os
 import pathlib
 from typing import Any, Literal, Protocol, TypeAlias
 
@@ -20,6 +21,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.membench_policy as membench_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -32,6 +34,11 @@ import openpi.transforms as _transforms
 ModelType: TypeAlias = _model.ModelType
 # Work around a tyro issue with using nnx.filterlib.Filter directly.
 Filter: TypeAlias = nnx.filterlib.Filter
+
+
+def _local_pretrain_params(model_name: str) -> str:
+    pretrain_root = pathlib.Path(os.getenv("OPENPI_PRETRAIN_MODEL_DIR", "/home/chensihang/membench/pretrain_model"))
+    return str(pretrain_root / model_name / "params")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -463,6 +470,49 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotMemBenchDataConfig(DataConfigFactory):
+    """Data config for MobileMemBench datasets converted to LeRobot format."""
+
+    default_prompt: str | None = None
+
+    repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
+        default=_transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "images": {
+                            "agentview_right": "observation.images.agentview_right",
+                            "eye_in_hand": "observation.images.eye_in_hand",
+                        },
+                        "state": "observation.state",
+                        "actions": "action",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+    )
+
+    action_sequence_keys: Sequence[str] = ("action",)
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        data_transforms = _transforms.Group(
+            inputs=[membench_policy.MemBenchInputs()],
+            outputs=[membench_policy.MemBenchOutputs(action_dim=13)],
+        )
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=self.repack_transforms,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class TrainConfig:
     # Name of the config. Must be unique. Will be used to reference this config.
     name: tyro.conf.Suppress[str]
@@ -824,6 +874,74 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps=20_000,
         batch_size=64,
+    ),
+    #
+    # Fine-tuning MobileMemBench configs.
+    #
+    TrainConfig(
+        name="pi0_membench_hs_wx_01",
+        model=pi0_config.Pi0Config(action_dim=32, action_horizon=50),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="membench_hs_wx_01",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi0_base")),
+        num_train_steps=15_000,
+        batch_size=8,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=4,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_membench_hs_wx_01",
+        model=pi0_config.Pi0Config(pi05=True, action_dim=32, action_horizon=50),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="membench_hs_wx_01",
+            assets=AssetsConfig(assets_dir="./assets/pi0_membench_hs_wx_01"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        num_train_steps=15_000,
+        batch_size=8,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=4,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_membench_hs_wx_01_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="membench_hs_wx_01",
+            assets=AssetsConfig(assets_dir="./assets/pi0_membench_hs_wx_01"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=16,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
     ),
     #
     # Fine-tuning DROID configs.

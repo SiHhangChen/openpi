@@ -1,6 +1,7 @@
 import dataclasses
 import functools
 import logging
+import os
 import platform
 from typing import Any
 
@@ -200,7 +201,13 @@ def main(config: _config.TrainConfig):
             f"Batch size {config.batch_size} must be divisible by the number of devices {jax.device_count()}."
         )
 
-    jax.config.update("jax_compilation_cache_dir", str(epath.Path("~/.cache/jax").expanduser()))
+    jax_cache_dir = (
+        epath.Path(os.environ["OPENPI_DATA_HOME"]) / "jax"
+        if "OPENPI_DATA_HOME" in os.environ
+        else epath.Path("~/.cache/jax").expanduser()
+    )
+    jax_cache_dir.mkdir(parents=True, exist_ok=True)
+    jax.config.update("jax_compilation_cache_dir", str(jax_cache_dir))
 
     rng = jax.random.key(config.seed)
     train_rng, init_rng = jax.random.split(rng)

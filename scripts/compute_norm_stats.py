@@ -6,6 +6,7 @@ to the config assets directory.
 """
 
 import numpy as np
+import os
 import tqdm
 import tyro
 
@@ -89,14 +90,15 @@ def create_rlds_dataloader(
 def main(config_name: str, max_frames: int | None = None):
     config = _config.get_config(config_name)
     data_config = config.data.create(config.assets_dirs, config.model)
+    batch_size = int(os.getenv("OPENPI_NORM_STATS_BATCH_SIZE", config.batch_size))
 
     if data_config.rlds_data_dir is not None:
         data_loader, num_batches = create_rlds_dataloader(
-            data_config, config.model.action_horizon, config.batch_size, max_frames
+            data_config, config.model.action_horizon, batch_size, max_frames
         )
     else:
         data_loader, num_batches = create_torch_dataloader(
-            data_config, config.model.action_horizon, config.batch_size, config.model, config.num_workers, max_frames
+            data_config, config.model.action_horizon, batch_size, config.model, config.num_workers, max_frames
         )
 
     keys = ["state", "actions"]

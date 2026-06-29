@@ -12,6 +12,7 @@ import numpy as np
 import torch
 
 import openpi.models.model as _model
+from openpi.training import membench_v3_dataset
 import openpi.training.config as _config
 from openpi.training.droid_rlds_dataset import DroidRldsDataset
 import openpi.transforms as _transforms
@@ -136,6 +137,12 @@ def create_torch_dataset(
         raise ValueError("Repo ID is not set. Cannot create dataset.")
     if repo_id == "fake":
         return FakeDataset(model_config, num_samples=1024)
+
+    if membench_v3_dataset.is_membench_v3_dataset(repo_id):
+        dataset = membench_v3_dataset.MemBenchV3Dataset(repo_id, action_horizon=action_horizon)
+        if data_config.prompt_from_task:
+            dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset.tasks)])
+        return dataset
 
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
     dataset = lerobot_dataset.LeRobotDataset(
