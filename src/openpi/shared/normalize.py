@@ -83,6 +83,17 @@ class RunningStats:
         variance = self._mean_of_squares - self._mean**2
         stddev = np.sqrt(np.maximum(0, variance))
         q01, q99 = self._compute_quantiles([0.01, 0.99])
+
+        # Guard against degenerate quantile ranges for sparse / near-constant dims.
+        # If a dim is 0 for >99% of frames (e.g. a rarely-used base_yaw command) the
+        # 1%-99% window collapses (q01 == q99), so normalization divides by ~1e-6 and
+        # amplifies any rare non-zero value into a huge flow-matching target. Widen
+        # the window to cover the observed range so real signal stays O(1).
+        full = self._max - self._min
+        degenerate = (q99 - q01) < (0.05 * full)
+        q01 = np.where(degenerate, self._min - 0.25 * full, q01)
+        q99 = np.where(degenerate, self._max + 0.25 * full, q99)
+
         return NormStats(mean=self._mean, std=stddev, q01=q01, q99=q99)
 
     def _adjust_histograms(self):

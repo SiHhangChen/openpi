@@ -475,14 +475,19 @@ class LeRobotMemBenchDataConfig(DataConfigFactory):
 
     default_prompt: str | None = None
 
+    # If set, the proprioceptive state is truncated to its first `state_keep_dim`
+    # dimensions before normalization. This lets the reduced state (e.g. without
+    # eef pose) be padded back up to exactly the model action dim.
+    state_keep_dim: int | None = None
+
     repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
         default=_transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
                     {
                         "images": {
-                            "agentview_right": "observation.images.agentview_right",
-                            "eye_in_hand": "observation.images.eye_in_hand",
+                            "agentview_right": "observation.images.robot0_agentview_right",
+                            "eye_in_hand": "observation.images.robot0_eye_in_hand",
                         },
                         "state": "observation.state",
                         "actions": "action",
@@ -497,8 +502,12 @@ class LeRobotMemBenchDataConfig(DataConfigFactory):
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        data_inputs: list[object] = []
+        if self.state_keep_dim is not None:
+            data_inputs.append(membench_policy.SliceState(self.state_keep_dim))
+        data_inputs.append(membench_policy.MemBenchInputs())
         data_transforms = _transforms.Group(
-            inputs=[membench_policy.MemBenchInputs()],
+            inputs=data_inputs,  # type: ignore[arg-type]
             outputs=[membench_policy.MemBenchOutputs(action_dim=13)],
         )
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
@@ -922,7 +931,6 @@ _CONFIGS = [
         ),
         data=LeRobotMemBenchDataConfig(
             repo_id="membench_hs_wx_01",
-            assets=AssetsConfig(assets_dir="./assets/pi0_membench_hs_wx_01"),
             base_config=DataConfig(prompt_from_task=True),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
@@ -935,7 +943,103 @@ _CONFIGS = [
         ).get_freeze_filter(),
         ema_decay=None,
         num_train_steps=60_000,
-        batch_size=16,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_membench_wa01_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wa01_200seeds_v061",
+            state_keep_dim=30,
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_membench_wr04_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wr04_201episodes_v061",
+            state_keep_dim=30,
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_membench_ts03_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="ts03_200seeds_v061",
+            state_keep_dim=30,
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
         log_interval=50,
         save_interval=5_000,
         keep_period=5_000,

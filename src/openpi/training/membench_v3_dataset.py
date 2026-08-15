@@ -4,9 +4,30 @@ import pathlib
 from typing import SupportsIndex
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import polars as pl
 
 from lerobot.common.datasets.video_utils import decode_video_frames
+
+
+# Columns needed from the per-frame data parquet files. Other columns (e.g. camera
+# intrinsics/extrinsics) carry HuggingFace Arrow extension types that current Polars
+# builds cannot parse, so we read these files with pyarrow (which falls back to the
+# storage type) and only project the columns we need.
+_FRAME_DATA_COLUMNS = (
+    "observation.state",
+    "action",
+    "timestamp",
+    "episode_index",
+    "task_index",
+    "index",
+)
+
+
+def _fixed_list_to_ndarray(column: pa.ChunkedArray) -> np.ndarray:
+    """Convert a fixed_size_list Arrow column into a 2-D numpy array of shape (rows, k)."""
+    return np.stack(column.to_numpy(zero_copy_only=False))
 
 
 class MemBenchV3Dataset:
@@ -40,6 +61,12 @@ class MemBenchV3Dataset:
         self.camera_keys = [
             key for key, feature in self.info["features"].items() if feature["dtype"] in ("video", "image")
         ]
+        # Optional allowlist: only decode the cameras the consuming policy actually uses
+        # (e.g. OPENPI_MEMBENCH_CAMERA_KEYS="observation.images.robot0_agentview_right,observation.images.robot0_eye_in_hand").
+        # Unused depth/left cameras are otherwise decoded for every frame, which is wasteful.
+        if (allowed := os.getenv("OPENPI_MEMBENCH_CAMERA_KEYS")):
+            allowed_keys = {key.strip() for key in allowed.split(",") if key.strip()}
+            self.camera_keys = [key for key in self.camera_keys if key in allowed_keys]
         self._image_shapes = {
             key: tuple(self.info["features"][key]["shape"])
             for key in self.camera_keys
@@ -78,17 +105,18 @@ class MemBenchV3Dataset:
         if not data_files:
             raise FileNotFoundError(f"No v3 frame data found under {self.root / 'data'}")
 
-        frame_data = pl.read_parquet(
-            [str(path) for path in data_files],
-            columns=["observation.state", "action", "timestamp", "episode_index", "task_index", "index"],
-        ).sort("index")
+        # Read with pyarrow (not polars): the frame files contain HuggingFace Arrow
+        # extension-type columns (camera intrinsics/extrinsics) that current Polars
+        # builds reject even when projected out.
+        tables = [pq.read_table(str(path), columns=list(_FRAME_DATA_COLUMNS)) for path in data_files]
+        frame_data = pa.concat_tables(tables).sort_by("index")
 
-        self._states = frame_data["observation.state"].to_numpy()
-        self._actions = frame_data["action"].to_numpy()
-        self._timestamps = frame_data["timestamp"].to_numpy()
-        self._episode_indices = frame_data["episode_index"].to_numpy()
-        self._task_indices = frame_data["task_index"].to_numpy()
-        self._indices = frame_data["index"].to_numpy()
+        self._states = _fixed_list_to_ndarray(frame_data.column("observation.state"))
+        self._actions = _fixed_list_to_ndarray(frame_data.column("action"))
+        self._timestamps = frame_data.column("timestamp").to_numpy()
+        self._episode_indices = frame_data.column("episode_index").to_numpy()
+        self._task_indices = frame_data.column("task_index").to_numpy()
+        self._indices = frame_data.column("index").to_numpy()
 
     def __len__(self) -> int:
         return len(self._indices)
@@ -122,7 +150,7 @@ class MemBenchV3Dataset:
 
     def _get_image(self, key: str, episode_index: int, timestamp: float) -> np.ndarray:
         if os.getenv("OPENPI_SKIP_IMAGE_DECODE") == "1":
-            return np.zeros((3, 1, 1), dtype=np.float32)
+            return np.zeros(self._image_shapes.get(key, (224, 224, 3)), dtype=np.uint8)
 
         chunk_index, file_index, from_timestamp = self._video_meta[key][episode_index]
         video_path = self.root / self.video_path.format(

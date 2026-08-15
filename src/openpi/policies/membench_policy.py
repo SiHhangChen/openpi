@@ -61,6 +61,24 @@ class MemBenchOutputs(transforms.DataTransformFn):
         return {"actions": np.asarray(data["actions"])[:, : self.action_dim]}
 
 
+@dataclasses.dataclass(frozen=True)
+class SliceState(transforms.DataTransformFn):
+    """Truncate the state to its first ``keep_dim`` dimensions (drops trailing dims, e.g. eef pose).
+
+    This runs before normalization and padding, so norm stats are computed on the
+    reduced state and ``PadStatesAndActions`` later pads it back up to the model
+    action dim.
+    """
+
+    keep_dim: int
+
+    def __call__(self, data: dict) -> dict:
+        if "state" in data:
+            state = np.asarray(data["state"])
+            data = {**data, "state": state[..., : self.keep_dim]}
+        return data
+
+
 def _to_hwc_uint8(image) -> np.ndarray:
     image = np.asarray(image)
 
