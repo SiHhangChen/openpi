@@ -41,6 +41,13 @@ def _local_pretrain_params(model_name: str) -> str:
     return str(pretrain_root / model_name / "params")
 
 
+def _local_trained_params(config_name: str, exp_name: str, step: int) -> str:
+    """Params path of a locally-trained checkpoint, e.g. to continue training a new
+    dataset from an already fine-tuned LoRA ckpt."""
+    ckpt_root = pathlib.Path(os.getenv("OPENPI_CKPT_ROOT", "./checkpoints"))
+    return str(ckpt_root / config_name / exp_name / f"{step}" / "params")
+
+
 @dataclasses.dataclass(frozen=True)
 class AssetsConfig:
     """Determines the location of assets (e.g., norm stats) that will be used to set up the data pipeline.
@@ -1094,6 +1101,41 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_membench_wa02_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wa02_200seeds_v061",
+            state_keep_dim=30,
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        # Continue from the ts03-trained LoRA ckpt (step 50000) instead of pi05_base.
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            _local_trained_params("pi05_membench_ts03_lora", "pi05_lora_membench_ts03", 50000)
+        ),
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
             action_dim=32,
