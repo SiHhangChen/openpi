@@ -103,6 +103,8 @@ class DataConfig:
 
     # If true, will use the LeRobot dataset task to define the prompt.
     prompt_from_task: bool = False
+    # If true, will use the per-frame MemER subtask to define the prompt.
+    prompt_from_subtask: bool = False
 
     # Only used for RLDS data loader (ie currently only used for DROID).
     rlds_data_dir: str | None = None
@@ -110,6 +112,10 @@ class DataConfig:
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
     # List of datasets to sample from: name, version, weight, and optionally filter_dict_path
     datasets: Sequence[droid_rlds_dataset.RLDSDataset] = ()
+
+    def __post_init__(self) -> None:
+        if self.prompt_from_task and self.prompt_from_subtask:
+            raise ValueError("prompt_from_task and prompt_from_subtask are mutually exclusive")
 
 
 class GroupFactory(Protocol):
@@ -984,6 +990,76 @@ _CONFIGS = [
         num_train_steps=60_000,
         batch_size=32,
         log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # MemER low-level policy: preserve the verified WA01 observation/action
+        # transforms and replace only the episode-level task prompt with the
+        # per-frame subtask prompt.
+        name="memer_wa01",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id=os.getenv("DATASET_REPO_ID", "wa01_200seeds_v061_subtasks_v2"),
+            state_keep_dim=30,
+            base_config=DataConfig(prompt_from_subtask=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=10,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # MemER low-level policy: TS01. Preserves the verified WA01 observation/
+        # action transforms and replaces the episode-level task prompt with the
+        # per-frame subtask prompt. Repo id points at the TS01 subtask dataset.
+        name="memer_ts01",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id=os.getenv("DATASET_REPO_ID", "ts01_200seeds_v061_subtasks_v2"),
+            state_keep_dim=30,
+            base_config=DataConfig(prompt_from_subtask=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=10,
         save_interval=5_000,
         keep_period=5_000,
         num_workers=32,

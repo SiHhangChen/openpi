@@ -140,9 +140,16 @@ def create_torch_dataset(
 
     if membench_v3_dataset.is_membench_v3_dataset(repo_id):
         dataset = membench_v3_dataset.MemBenchV3Dataset(repo_id, action_horizon=action_horizon)
-        if data_config.prompt_from_task:
+        if data_config.prompt_from_subtask:
+            if dataset.subtasks is None:
+                raise ValueError(f'MemBench dataset "{repo_id}" has no meta/subtasks.parquet')
+            dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotSubtask(dataset.subtasks)])
+        elif data_config.prompt_from_task:
             dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset.tasks)])
         return dataset
+
+    if data_config.prompt_from_subtask:
+        raise ValueError("Subtask prompts are currently supported only for local MemBench v3 datasets")
 
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
     dataset = lerobot_dataset.LeRobotDataset(

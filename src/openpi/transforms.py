@@ -325,6 +325,23 @@ class PromptFromLeRobotTask(DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class PromptFromLeRobotSubtask(DataTransformFn):
+    """Extracts a prompt from the current LeRobot dataset subtask."""
+
+    subtasks: dict[int, str]
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if "subtask_index" not in data:
+            raise ValueError('Cannot extract prompt without "subtask_index"')
+
+        subtask_index = int(data["subtask_index"])
+        if (prompt := self.subtasks.get(subtask_index)) is None:
+            raise ValueError(f"{subtask_index=} not found in subtask mapping: {self.subtasks}")
+
+        return {**data, "prompt": prompt}
+
+
+@dataclasses.dataclass(frozen=True)
 class PadStatesAndActions(DataTransformFn):
     """Zero-pads states and actions to the model action dimension."""
 

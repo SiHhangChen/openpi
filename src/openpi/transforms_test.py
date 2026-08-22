@@ -119,3 +119,13 @@ def test_extract_prompt_from_task():
 
     with pytest.raises(ValueError, match="task_index=2 not found in task mapping"):
         transform({"task_index": 2})
+
+
+def test_extract_prompt_from_subtask():
+    transform = _transforms.PromptFromLeRobotSubtask({3: "Pick up the left coffee cup"})
+
+    data = transform({"subtask_index": 3})
+    assert data["prompt"] == "Pick up the left coffee cup"
+
+    with pytest.raises(ValueError, match="subtask_index=2 not found in subtask mapping"):
+        transform({"subtask_index": 2})

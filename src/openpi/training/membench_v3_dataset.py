@@ -3,13 +3,11 @@ import os
 import pathlib
 from typing import SupportsIndex
 
+from lerobot.common.datasets.video_utils import decode_video_frames
 import numpy as np
+import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
-import polars as pl
-
-from lerobot.common.datasets.video_utils import decode_video_frames
-
 
 # Columns needed from the per-frame data parquet files. Other columns (e.g. camera
 # intrinsics/extrinsics) carry HuggingFace Arrow extension types that current Polars
@@ -64,7 +62,7 @@ class MemBenchV3Dataset:
         # Optional allowlist: only decode the cameras the consuming policy actually uses
         # (e.g. OPENPI_MEMBENCH_CAMERA_KEYS="observation.images.robot0_agentview_right,observation.images.robot0_eye_in_hand").
         # Unused depth/left cameras are otherwise decoded for every frame, which is wasteful.
-        if (allowed := os.getenv("OPENPI_MEMBENCH_CAMERA_KEYS")):
+        if allowed := os.getenv("OPENPI_MEMBENCH_CAMERA_KEYS"):
             allowed_keys = {key.strip() for key in allowed.split(",") if key.strip()}
             self.camera_keys = [key for key in self.camera_keys if key in allowed_keys]
         self._image_shapes = {
@@ -74,6 +72,8 @@ class MemBenchV3Dataset:
         }
 
         self.tasks = _load_tasks(self.root / "meta" / "tasks.parquet")
+        subtasks_path = self.root / "meta" / "subtasks.parquet"
+        self.subtasks = _load_subtasks(subtasks_path) if subtasks_path.is_file() else None
         self._load_episode_metadata()
         self._load_frame_data()
 
@@ -108,7 +108,10 @@ class MemBenchV3Dataset:
         # Read with pyarrow (not polars): the frame files contain HuggingFace Arrow
         # extension-type columns (camera intrinsics/extrinsics) that current Polars
         # builds reject even when projected out.
-        tables = [pq.read_table(str(path), columns=list(_FRAME_DATA_COLUMNS)) for path in data_files]
+        frame_columns = list(_FRAME_DATA_COLUMNS)
+        if "subtask_index" in pq.read_schema(str(data_files[0])).names:
+            frame_columns.append("subtask_index")
+        tables = [pq.read_table(str(path), columns=frame_columns) for path in data_files]
         frame_data = pa.concat_tables(tables).sort_by("index")
 
         self._states = _fixed_list_to_ndarray(frame_data.column("observation.state"))
@@ -116,6 +119,9 @@ class MemBenchV3Dataset:
         self._timestamps = frame_data.column("timestamp").to_numpy()
         self._episode_indices = frame_data.column("episode_index").to_numpy()
         self._task_indices = frame_data.column("task_index").to_numpy()
+        self._subtask_indices = (
+            frame_data.column("subtask_index").to_numpy() if "subtask_index" in frame_data.column_names else None
+        )
         self._indices = frame_data.column("index").to_numpy()
 
     def __len__(self) -> int:
@@ -135,9 +141,12 @@ class MemBenchV3Dataset:
             "task_index": int(self._task_indices[idx]),
             "index": int(self._indices[idx]),
         }
+        if self._subtask_indices is not None:
+            item["subtask_index"] = int(self._subtask_indices[idx])
 
+        episode_last_index = self._episode_from[episode_index] + self._episode_length[episode_index] - 1
         for key in self.camera_keys:
-            item[key] = self._get_image(key, episode_index, timestamp)
+            item[key] = self._get_image(key, episode_index, timestamp, is_episode_last=idx == episode_last_index)
 
         return item
 
@@ -148,7 +157,9 @@ class MemBenchV3Dataset:
         offsets = np.minimum(offset + np.arange(self.action_horizon), episode_length - 1)
         return episode_start + offsets
 
-    def _get_image(self, key: str, episode_index: int, timestamp: float) -> np.ndarray:
+    def _get_image(
+        self, key: str, episode_index: int, timestamp: float, *, is_episode_last: bool = False
+    ) -> np.ndarray:
         if os.getenv("OPENPI_SKIP_IMAGE_DECODE") == "1":
             return np.zeros(self._image_shapes.get(key, (224, 224, 3)), dtype=np.uint8)
 
@@ -158,12 +169,27 @@ class MemBenchV3Dataset:
             chunk_index=chunk_index,
             file_index=file_index,
         )
-        frames = decode_video_frames(
-            video_path,
-            [from_timestamp + timestamp],
-            self.tolerance_s,
-            self.video_backend,
-        )
+        query_timestamp = from_timestamp + timestamp
+        try:
+            frames = decode_video_frames(
+                video_path,
+                [query_timestamp],
+                self.tolerance_s,
+                self.video_backend,
+            )
+        except AssertionError as error:
+            # Some converted datasets contain one fewer video frame than the
+            # parquet metadata at an episode boundary. Only permit the final
+            # logical sample to reuse the immediately preceding video frame;
+            # all interior synchronization errors remain fatal.
+            if not is_episode_last or "violate the tolerance" not in str(error):
+                raise
+            frames = decode_video_frames(
+                video_path,
+                [query_timestamp - 1 / self.fps],
+                self.tolerance_s,
+                self.video_backend,
+            )
         return frames.squeeze(0).numpy()
 
 
@@ -179,3 +205,8 @@ def _default_lerobot_root() -> pathlib.Path:
 def _load_tasks(tasks_path: pathlib.Path) -> dict[int, str]:
     tasks = pl.read_parquet(tasks_path)
     return {int(row["task_index"]): str(row["task"]) for row in tasks.iter_rows(named=True)}
+
+
+def _load_subtasks(subtasks_path: pathlib.Path) -> dict[int, str]:
+    subtasks = pl.read_parquet(subtasks_path)
+    return {int(row["subtask_index"]): str(row["subtask"]) for row in subtasks.iter_rows(named=True)}
