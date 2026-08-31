@@ -79,6 +79,8 @@ class AssetsConfig:
 class DataConfig:
     # LeRobot repo id. If None, fake data will be created.
     repo_id: str | None = None
+    # Optional list of local datasets to concatenate for multi-task training.
+    repo_ids: Sequence[str] = ()
     # Directory within the assets directory containing the data assets.
     asset_id: str | None = None
     # Contains precomputed normalization stats. If None, normalization will not be performed.
@@ -531,6 +533,68 @@ class LeRobotMemBenchDataConfig(DataConfigFactory):
             data_transforms=data_transforms,
             model_transforms=model_transforms,
             action_sequence_keys=self.action_sequence_keys,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotMultiMemBenchDataConfig(DataConfigFactory):
+    """Data config for joint training across multiple MemBench v3 datasets."""
+
+    repo_id: str = "membench_multi_15"
+    repo_ids: Sequence[str] = ()
+    asset_id: str = "membench_multi_15"
+    state_keep_dim: int | None = 30
+    prompt_source: Literal["task", "subtask"] = "subtask"
+
+    repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
+        default_factory=lambda: _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "images": {
+                            "agentview_right": "observation.images.robot0_agentview_right",
+                            "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                        },
+                        "state": "observation.state",
+                        "actions": "action",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+    )
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        if not self.repo_ids:
+            raise ValueError("At least one dataset is required for multi-task MemBench training")
+        if self.prompt_source not in ("task", "subtask"):
+            raise ValueError(f"Unsupported prompt source: {self.prompt_source}")
+        data_inputs: list[object] = []
+        if self.state_keep_dim is not None:
+            data_inputs.append(membench_policy.SliceState(self.state_keep_dim))
+        data_inputs.append(membench_policy.MemBenchInputs())
+        data_transforms = _transforms.Group(
+            inputs=data_inputs,  # type: ignore[arg-type]
+            outputs=[membench_policy.MemBenchOutputs(action_dim=13)],
+        )
+        model_transforms = ModelTransformFactory()(model_config)
+        # Multi-task experiments may deliberately reuse norm stats from a
+        # previous config, so honor the inherited AssetsConfig override.
+        asset_id = self.assets.asset_id or self.asset_id
+        norm_stats = self._load_norm_stats(epath.Path(self.assets.assets_dir or assets_dirs), asset_id)
+        return DataConfig(
+            repo_id=self.repo_ids[0],
+            repo_ids=tuple(self.repo_ids),
+            asset_id=asset_id,
+            norm_stats=norm_stats,
+            repack_transforms=self.repack_transforms,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=("action",),
+            prompt_from_task=self.prompt_source == "task",
+            prompt_from_subtask=self.prompt_source == "subtask",
+            use_quantile_norm=model_config.model_type != ModelType.PI0,
         )
 
 
@@ -1028,6 +1092,177 @@ _CONFIGS = [
         save_interval=5_000,
         keep_period=5_000,
         num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Standalone, memoryless multi-task baseline over the 15 original
+        # task-prompt MemBench datasets.
+        name="pi05_membench_multi_15_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMultiMemBenchDataConfig(
+            repo_ids=tuple(
+                value.strip() for value in os.getenv("OPENPI_MULTI_DATASETS", "").split(",") if value.strip()
+            )
+            or (
+                "tm01_200seeds_v061",
+                "tm02_200seeds_v061",
+                "ts01_200seeds_v061",
+                "ts02_200seeds_v061",
+                "ts03_200seeds_v061",
+                "ts04_200seeds_v061",
+                "wa01_200seeds_v061",
+                "wa02_200seeds_v061",
+                "wa03_200seeds_v061",
+                "wa05_200seeds_v061",
+                "wr01_200seeds_v061",
+                "wr03_200seeds_v061",
+                "wr05_200seeds_v061",
+                "wr06_200seeds_v061",
+                "wx01_200seeds_v061",
+            ),
+            asset_id="membench_all_15_task",
+            prompt_source="task",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=2_000,
+            peak_lr=2.5e-5,
+            decay_steps=100_000,
+            decay_lr=2.5e-6,
+        ),
+        ema_decay=None,
+        num_train_steps=100_000,
+        batch_size=96,
+        log_interval=10,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=4,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Joint MemER low-level policy over all 15 subtask-labeled datasets.
+        name="memer_multi_15",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMultiMemBenchDataConfig(
+            repo_ids=tuple(value.strip() for value in os.getenv("MEMER_MULTI_DATASETS", "").split(",") if value.strip())
+            or (
+                "tm01_200seeds_v061_subtasks_v2",
+                "tm02_200seeds_v061_subtasks_v2",
+                "ts01_200seeds_v061_subtasks_v2",
+                "ts02_200seeds_v061_subtasks_v3",
+                "ts03_200seeds_v061_subtasks_v2",
+                "ts04_200seeds_v061_subtasks_v4",
+                "wa01_200seeds_v061_subtasks_v2",
+                "wa02_200seeds_v061_subtasks_v4",
+                "wa03_200seeds_v061_subtasks_v2",
+                "wa05_200seeds_v061_subtasks_v2",
+                "wr01_200seeds_v061_subtasks_v2",
+                "wr03_200seeds_v061_subtasks_v2",
+                "wr05_200seeds_v061_subtasks_v3",
+                "wr06_200seeds_v061_subtasks_v2",
+                "wx01_200seeds_v061_subtasks_v2",
+            )
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=96,
+        log_interval=10,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=4,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Prompt-format refresh: warm-start model parameters from the 70k
+        # MemER checkpoint while intentionally creating a fresh optimizer state
+        # and checkpoint directory.
+        name="memer_multi_15_prompt_v2",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMultiMemBenchDataConfig(
+            repo_ids=tuple(value.strip() for value in os.getenv("MEMER_MULTI_DATASETS", "").split(",") if value.strip())
+            or (
+                "tm01_200seeds_v061_subtasks_v2",
+                "tm02_200seeds_v061_subtasks_v2",
+                "ts01_200seeds_v061_subtasks_v2",
+                "ts02_200seeds_v061_subtasks_v3",
+                "ts03_200seeds_v061_subtasks_v2",
+                "ts04_200seeds_v061_subtasks_v4",
+                "wa01_200seeds_v061_subtasks_v2",
+                "wa02_200seeds_v061_subtasks_v4",
+                "wa03_200seeds_v061_subtasks_v2",
+                "wa05_200seeds_v061_subtasks_v2",
+                "wr01_200seeds_v061_subtasks_v2",
+                "wr03_200seeds_v061_subtasks_v2",
+                "wr05_200seeds_v061_subtasks_v3",
+                "wr06_200seeds_v061_subtasks_v2",
+                "wx01_200seeds_v061_subtasks_v2",
+            ),
+            assets=AssetsConfig(
+                assets_dir="./assets/memer_multi_15",
+                asset_id="membench_multi_15",
+            ),
+            prompt_source="subtask",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            _local_trained_params("memer_multi_15", "memer_multi_15_bs96_100000steps_torchcodec", 70000)
+        ),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=1e-5,
+            decay_steps=30_000,
+            decay_lr=1e-6,
+        ),
+        optimizer=_optimizer.AdamW(),
+        ema_decay=None,
+        num_train_steps=30_000,
+        batch_size=96,
+        log_interval=10,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=4,
         fsdp_devices=1,
         wandb_enabled=False,
     ),

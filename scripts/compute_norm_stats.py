@@ -5,8 +5,11 @@ will compute the mean and standard deviation of the data in the dataset and save
 to the config assets directory.
 """
 
-import numpy as np
+import dataclasses
 import os
+
+import numpy as np
+import torch
 import tqdm
 import tyro
 
@@ -17,9 +20,11 @@ import openpi.training.data_loader as _data_loader
 import openpi.transforms as transforms
 
 
-class RemoveStrings(transforms.DataTransformFn):
+class KeepStatsKeys(transforms.DataTransformFn):
     def __call__(self, x: dict) -> dict:
-        return {k: v for k, v in x.items() if not np.issubdtype(np.asarray(v).dtype, np.str_)}
+        # Norm statistics are consumed only for these two model inputs. Dropping
+        # images here avoids collating large camera tensors during the CPU pass.
+        return {key: x[key] for key in ("state", "actions") if key in x}
 
 
 def create_torch_dataloader(
@@ -33,13 +38,13 @@ def create_torch_dataloader(
     if data_config.repo_id is None:
         raise ValueError("Data config must have a repo_id")
     dataset = _data_loader.create_torch_dataset(data_config, action_horizon, model_config)
+    sampling_weights = getattr(dataset, "sampling_weights", None)
     dataset = _data_loader.TransformedDataset(
         dataset,
         [
             *data_config.repack_transforms.inputs,
             *data_config.data_transforms.inputs,
-            # Remove strings since they are not supported by JAX and are not needed to compute norm stats.
-            RemoveStrings(),
+            KeepStatsKeys(),
         ],
     )
     if max_frames is not None and max_frames < len(dataset):
@@ -48,11 +53,27 @@ def create_torch_dataloader(
     else:
         num_batches = len(dataset) // batch_size
         shuffle = False
+
+    # Keep normalization statistics aligned with joint-training sampling. The
+    # weighted sampler draws from every source dataset with equal probability,
+    # including when max_frames is used (rather than truncating at source 0).
+    sampler = None
+    if sampling_weights is not None and _data_loader.multi_sampling_mode() == "equal":
+        generator = torch.Generator()
+        generator.manual_seed(int(os.getenv("OPENPI_NORM_STATS_SEED", "0")))
+        sampler = torch.utils.data.WeightedRandomSampler(
+            torch.as_tensor(sampling_weights, dtype=torch.double),
+            num_samples=num_batches * batch_size,
+            replacement=True,
+            generator=generator,
+        )
+        shuffle = False
     data_loader = _data_loader.TorchDataLoader(
         dataset,
         local_batch_size=batch_size,
-        num_workers=num_workers,
+        num_workers=int(os.getenv("OPENPI_NORM_STATS_NUM_WORKERS", num_workers)),
         shuffle=shuffle,
+        sampler=sampler,
         num_batches=num_batches,
         framework="pytorch",
     )
@@ -71,8 +92,7 @@ def create_rlds_dataloader(
         [
             *data_config.repack_transforms.inputs,
             *data_config.data_transforms.inputs,
-            # Remove strings since they are not supported by JAX and are not needed to compute norm stats.
-            RemoveStrings(),
+            KeepStatsKeys(),
         ],
         is_batched=True,
     )
@@ -88,8 +108,10 @@ def create_rlds_dataloader(
     return data_loader, num_batches
 
 
-def main(config_name: str, max_frames: int | None = None):
+def main(config_name: str, max_frames: int | None = None, assets_base_dir: str | None = None):
     config = _config.get_config(config_name)
+    if assets_base_dir is not None:
+        config = dataclasses.replace(config, assets_base_dir=assets_base_dir)
     data_config = config.data.create(config.assets_dirs, config.model)
     batch_size = int(os.getenv("OPENPI_NORM_STATS_BATCH_SIZE", config.batch_size))
 
@@ -111,7 +133,7 @@ def main(config_name: str, max_frames: int | None = None):
 
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
-    output_path = config.assets_dirs / data_config.repo_id
+    output_path = config.assets_dirs / (data_config.asset_id or data_config.repo_id)
     print(f"Writing stats to: {output_path}")
     normalize.save(output_path, norm_stats)
 

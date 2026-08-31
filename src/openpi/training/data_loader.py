@@ -20,6 +20,14 @@ import openpi.transforms as _transforms
 T_co = TypeVar("T_co", covariant=True)
 
 
+def multi_sampling_mode() -> str:
+    """Return the sampling mode for concatenated MemBench datasets."""
+    mode = os.getenv("OPENPI_MULTI_SAMPLING", os.getenv("MEMER_MULTI_SAMPLING", "proportional"))
+    if mode not in ("equal", "proportional"):
+        raise ValueError(f"OPENPI_MULTI_SAMPLING must be 'equal' or 'proportional', got: {mode}")
+    return mode
+
+
 class Dataset(Protocol[T_co]):
     """Interface for a dataset with random access."""
 
@@ -61,6 +69,11 @@ class TransformedDataset(Dataset[T_co]):
 
     def __len__(self) -> int:
         return len(self._dataset)
+
+    @property
+    def sampling_weights(self):
+        """Forward optional sampler weights from a wrapped source dataset."""
+        return getattr(self._dataset, "sampling_weights", None)
 
 
 class IterableTransformedDataset(IterableDataset[T_co]):
@@ -138,11 +151,32 @@ def create_torch_dataset(
     if repo_id == "fake":
         return FakeDataset(model_config, num_samples=1024)
 
+    if data_config.repo_ids:
+        if not all(membench_v3_dataset.is_membench_v3_dataset(dataset_id) for dataset_id in data_config.repo_ids):
+            raise ValueError(f"All multi-task datasets must be local MemBench v3 datasets: {data_config.repo_ids}")
+        if not (data_config.prompt_from_task or data_config.prompt_from_subtask):
+            raise ValueError("Multi-task MemBench datasets require task or subtask prompts")
+        prompt_source = "subtask" if data_config.prompt_from_subtask else "task"
+        dataset = membench_v3_dataset.ConcatMemBenchV3Dataset(
+            data_config.repo_ids,
+            action_horizon=action_horizon,
+            prompt_source=prompt_source,
+        )
+        if data_config.prompt_from_subtask:
+            if dataset.subtasks is None:
+                raise ValueError("Multi-task MemBench dataset has no subtask metadata")
+            dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotSubtask(dataset.subtasks)])
+        elif data_config.prompt_from_task:
+            dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset.tasks)])
+        return dataset
+
     if membench_v3_dataset.is_membench_v3_dataset(repo_id):
         dataset = membench_v3_dataset.MemBenchV3Dataset(repo_id, action_horizon=action_horizon)
         if data_config.prompt_from_subtask:
             if dataset.subtasks is None:
-                raise ValueError(f'MemBench dataset "{repo_id}" has no meta/subtasks.parquet')
+                raise ValueError(f'MemBench dataset "{repo_id}" has no subtask metadata')
+            if not dataset.has_subtask_indices:
+                raise ValueError(f'MemBench dataset "{repo_id}" has no per-frame subtask annotations')
             dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotSubtask(dataset.subtasks)])
         elif data_config.prompt_from_task:
             dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset.tasks)])
@@ -314,12 +348,22 @@ def create_torch_data_loader(
         seed: The seed to use for shuffling the data.
     """
     dataset = create_torch_dataset(data_config, action_horizon, model_config)
+    sampling_weights = getattr(dataset, "sampling_weights", None)
     dataset = transform_dataset(dataset, data_config, skip_norm_stats=skip_norm_stats)
 
     # Use TorchDataLoader for both frameworks
     # For PyTorch DDP, create DistributedSampler and divide batch size by world size
     # For JAX, divide by process count
     sampler = None
+    if sampling_weights is not None and multi_sampling_mode() == "equal":
+        generator = torch.Generator()
+        generator.manual_seed(seed)
+        sampler = torch.utils.data.WeightedRandomSampler(
+            torch.as_tensor(sampling_weights, dtype=torch.double),
+            num_samples=len(dataset),
+            replacement=True,
+            generator=generator,
+        )
     if framework == "pytorch":
         if torch.distributed.is_initialized():
             sampler = torch.utils.data.distributed.DistributedSampler(

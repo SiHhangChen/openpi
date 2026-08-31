@@ -29,6 +29,7 @@ fi
 # Dataset and pretrained checkpoint locations.
 HF_LEROBOT_HOME="${HF_LEROBOT_HOME:-/data1/shared_workspace/chensihang/dataset/memer/pi05}"
 DATASET_REPO_ID="${DATASET_REPO_ID:-wa01_200seeds_v061_subtasks_v2}"
+DATASET_REPO_IDS="${DATASET_REPO_IDS:-${OPENPI_MULTI_DATASETS:-${MEMER_MULTI_DATASETS:-}}}"
 OPENPI_PRETRAIN_MODEL_DIR="${OPENPI_PRETRAIN_MODEL_DIR:-/data1/shared_workspace/tangzhipeng/ckpts/openpi/openpi_assets}"
 OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-${OPENPI_DIR}/.cache/openpi}"
 ASSETS_BASE_DIR="${ASSETS_BASE_DIR:-${OPENPI_DIR}/assets}"
@@ -68,6 +69,7 @@ NORM_STATS_MAX_FRAMES="${NORM_STATS_MAX_FRAMES:-}"
 
 # Set DRY_RUN=true to print the resolved commands without running them.
 DRY_RUN="${DRY_RUN:-false}"
+RUN_TRAINING="${RUN_TRAINING:-true}"
 
 require_positive_integer() {
   local name="$1"
@@ -100,6 +102,7 @@ require_boolean RESUME "${RESUME}"
 require_boolean OVERWRITE "${OVERWRITE}"
 require_boolean COMPUTE_NORM_STATS "${COMPUTE_NORM_STATS}"
 require_boolean DRY_RUN "${DRY_RUN}"
+require_boolean RUN_TRAINING "${RUN_TRAINING}"
 
 if [[ "${RESUME}" == "true" && "${OVERWRITE}" == "true" ]]; then
   echo "RESUME and OVERWRITE cannot both be true." >&2
@@ -138,9 +141,21 @@ if ! command -v uv >/dev/null 2>&1; then
   echo "uv is not available in PATH." >&2
   exit 1
 fi
-if [[ ! -f "${HF_LEROBOT_HOME}/${DATASET_REPO_ID}/meta/info.json" ]]; then
-  echo "Dataset metadata not found: ${HF_LEROBOT_HOME}/${DATASET_REPO_ID}/meta/info.json" >&2
-  exit 1
+if [[ -n "${DATASET_REPO_IDS}" ]]; then
+  IFS=',' read -r -a dataset_ids <<< "${DATASET_REPO_IDS}"
+  for dataset_id in "${dataset_ids[@]}"; do
+    dataset_id="${dataset_id//[[:space:]]/}"
+    [[ -n "${dataset_id}" ]] || continue
+    if [[ ! -f "${HF_LEROBOT_HOME}/${dataset_id}/meta/info.json" ]]; then
+      echo "Dataset metadata not found: ${HF_LEROBOT_HOME}/${dataset_id}/meta/info.json" >&2
+      exit 1
+    fi
+  done
+else
+  if [[ ! -f "${HF_LEROBOT_HOME}/${DATASET_REPO_ID}/meta/info.json" ]]; then
+    echo "Dataset metadata not found: ${HF_LEROBOT_HOME}/${DATASET_REPO_ID}/meta/info.json" >&2
+    exit 1
+  fi
 fi
 if [[ ! -d "${OPENPI_PRETRAIN_MODEL_DIR}/pi05_base/params" ]]; then
   echo "pi0.5 base params not found: ${OPENPI_PRETRAIN_MODEL_DIR}/pi05_base/params" >&2
@@ -151,6 +166,13 @@ mkdir -p "${OPENPI_DATA_HOME}" "${CHECKPOINT_BASE_DIR}"
 
 export HF_LEROBOT_HOME
 export DATASET_REPO_ID
+export DATASET_REPO_IDS
+if [[ -n "${OPENPI_MULTI_DATASETS:-}" ]]; then
+  export OPENPI_MULTI_DATASETS
+fi
+if [[ -n "${MEMER_MULTI_DATASETS:-}" ]]; then
+  export MEMER_MULTI_DATASETS
+fi
 export OPENPI_PRETRAIN_MODEL_DIR
 export OPENPI_DATA_HOME
 export OPENPI_MEMBENCH_CAMERA_KEYS
@@ -187,9 +209,13 @@ if [[ "${OVERWRITE}" == "true" ]]; then
 fi
 train_args+=("$@")
 
-echo "Resolved MemER pi0.5 training settings:"
+echo "Resolved pi0.5 training settings:"
 echo "  config / experiment : ${CONFIG_NAME} / ${EXP_NAME}"
-echo "  dataset              : ${HF_LEROBOT_HOME}/${DATASET_REPO_ID}"
+if [[ -n "${DATASET_REPO_IDS}" ]]; then
+  echo "  datasets             : ${HF_LEROBOT_HOME}/{${DATASET_REPO_IDS}}"
+else
+  echo "  dataset              : ${HF_LEROBOT_HOME}/${DATASET_REPO_ID}"
+fi
 echo "  GPUs                 : ${CUDA_VISIBLE_DEVICES} (${gpu_count})"
 echo "  global / per-GPU BS  : ${BATCH_SIZE} / $((BATCH_SIZE / gpu_count))"
 echo "  train steps          : ${NUM_TRAIN_STEPS}"
@@ -200,7 +226,7 @@ echo "  checkpoint directory : ${CHECKPOINT_BASE_DIR}/${CONFIG_NAME}/${EXP_NAME}
 cd "${OPENPI_DIR}"
 
 if [[ "${COMPUTE_NORM_STATS}" == "true" ]]; then
-  norm_args=("--config-name=${CONFIG_NAME}")
+  norm_args=("--config-name=${CONFIG_NAME}" "--assets-base-dir=${ASSETS_BASE_DIR}")
   if [[ -n "${NORM_STATS_MAX_FRAMES}" ]]; then
     require_positive_integer NORM_STATS_MAX_FRAMES "${NORM_STATS_MAX_FRAMES}"
     norm_args+=("--max-frames=${NORM_STATS_MAX_FRAMES}")
@@ -214,9 +240,13 @@ if [[ "${COMPUTE_NORM_STATS}" == "true" ]]; then
   fi
 fi
 
-echo -n "Training command:"
-printf ' %q' uv run scripts/train.py "${train_args[@]}"
-echo
-if [[ "${DRY_RUN}" != "true" ]]; then
-  uv run scripts/train.py "${train_args[@]}"
+if [[ "${RUN_TRAINING}" == "true" ]]; then
+  echo -n "Training command:"
+  printf ' %q' uv run scripts/train.py "${train_args[@]}"
+  echo
+  if [[ "${DRY_RUN}" != "true" ]]; then
+    uv run scripts/train.py "${train_args[@]}"
+  fi
+else
+  echo "Training disabled (RUN_TRAINING=false)."
 fi
