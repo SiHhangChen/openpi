@@ -11,32 +11,39 @@ class MemBenchInputs(transforms.DataTransformFn):
     """Inputs for MobileMemBench-style LeRobot datasets.
 
     Expected inputs after repacking:
-    - images: dict with "agentview_right" and "eye_in_hand"
+    - images: dict with "agentview_right" and "eye_in_hand", plus optional
+      "agentview_left"
     - state: proprioceptive state, any dimension <= model action dim
     - actions: action chunks, any dimension <= model action dim
     - prompt: language instruction
     """
 
-    EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = ("agentview_right", "eye_in_hand")
+    REQUIRED_CAMERAS: ClassVar[tuple[str, ...]] = ("agentview_right", "eye_in_hand")
+    OPTIONAL_CAMERAS: ClassVar[tuple[str, ...]] = ("agentview_left",)
 
     def __call__(self, data: dict) -> dict:
         in_images = data["images"]
-        if set(in_images) - set(self.EXPECTED_CAMERAS):
-            raise ValueError(f"Expected images to contain {self.EXPECTED_CAMERAS}, got {tuple(in_images)}")
+        expected_cameras = self.REQUIRED_CAMERAS + self.OPTIONAL_CAMERAS
+        if unexpected := set(in_images) - set(expected_cameras):
+            raise ValueError(f"Unexpected cameras {tuple(sorted(unexpected))}; expected a subset of {expected_cameras}")
+        if missing := set(self.REQUIRED_CAMERAS) - set(in_images):
+            raise ValueError(f"Missing required cameras {tuple(sorted(missing))}; got {tuple(in_images)}")
 
         base_image = _to_hwc_uint8(in_images["agentview_right"])
         wrist_image = _to_hwc_uint8(in_images["eye_in_hand"])
+        has_left_view = "agentview_left" in in_images
+        left_view_image = _to_hwc_uint8(in_images["agentview_left"]) if has_left_view else np.zeros_like(base_image)
 
         inputs = {
             "image": {
                 "base_0_rgb": base_image,
                 "left_wrist_0_rgb": wrist_image,
-                "right_wrist_0_rgb": np.zeros_like(base_image),
+                "right_wrist_0_rgb": left_view_image,
             },
             "image_mask": {
                 "base_0_rgb": np.True_,
                 "left_wrist_0_rgb": np.True_,
-                "right_wrist_0_rgb": np.False_,
+                "right_wrist_0_rgb": np.bool_(has_left_view),
             },
             "state": np.asarray(data["state"], dtype=np.float32),
         }

@@ -1061,6 +1061,55 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
+        name="pi05_membench_wa01_3view_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wa01_200seeds_v061",
+            assets=AssetsConfig(assets_dir="./assets/pi05_membench_wa01_lora"),
+            state_keep_dim=30,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
         # MemER low-level policy: preserve the verified WA01 observation/action
         # transforms and replace only the episode-level task prompt with the
         # per-frame subtask prompt.
@@ -1337,6 +1386,55 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
+        name="pi05_membench_ts01_3view_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="ts01_200seeds_v061",
+            assets=AssetsConfig(assets_dir="./assets/pi05_membench_ts01_lora"),
+            state_keep_dim=30,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
         name="pi05_membench_wr04_lora",
         model=pi0_config.Pi0Config(
             pi05=True,
@@ -1502,6 +1600,55 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
+        name="pi05_membench_wa05_3view_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wa05_200seeds_v061",
+            assets=AssetsConfig(assets_dir="./assets/pi05_membench_wa05_lora"),
+            state_keep_dim=30,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
         name="pi05_membench_ts02_lora",
         model=pi0_config.Pi0Config(
             pi05=True,
@@ -1513,6 +1660,55 @@ _CONFIGS = [
         data=LeRobotMemBenchDataConfig(
             repo_id=os.getenv("DATASET_REPO_ID", "ts02_200seeds_v061"),
             state_keep_dim=30,
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_membench_ts02_3view_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id=os.getenv("DATASET_REPO_ID", "ts02_compact_return_arm_200seeds_v061"),
+            assets=AssetsConfig(assets_dir="./assets/pi05_membench_ts02_lora"),
+            state_keep_dim=30,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
             base_config=DataConfig(prompt_from_task=True),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
