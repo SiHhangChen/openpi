@@ -23,6 +23,7 @@ import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.policies.membench_policy as membench_policy
 import openpi.shared.download as _download
+import openpi.shared.nnx_utils as nnx_utils
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
 import openpi.training.misc.polaris_config as polaris_config
@@ -1646,6 +1647,106 @@ _CONFIGS = [
         keep_period=5_000,
         num_workers=32,
         fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # WA05 three-view full fine-tuning. Keep the data pipeline and training
+        # schedule identical to the LoRA config above, but train every VLM and
+        # action-expert parameter from the pi05 base checkpoint.
+        name="pi05_membench_wa05_3view_full",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wa05_200seeds_v061",
+            assets=AssetsConfig(assets_dir="./assets/pi05_membench_wa05_3view_full"),
+            state_keep_dim=30,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=4,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # WA05 three-view hybrid fine-tuning: LoRA for the VLM language model,
+        # while the complete action expert and action projections are trainable.
+        # Freeze the SigLIP image tower as part of the VLM base parameters.
+        name="pi05_membench_wa05_3view_vlm_lora_action_full",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wa05_200seeds_v061",
+            assets=AssetsConfig(assets_dir="./assets/pi05_membench_wa05_3view_full"),
+            state_keep_dim=30,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx.Any(
+            nnx_utils.PathRegex(".*PaliGemma/img.*"),
+            pi0_config.Pi0Config(
+                pi05=True,
+                action_dim=32,
+                action_horizon=50,
+                paligemma_variant="gemma_2b_lora",
+                action_expert_variant="gemma_300m",
+            ).get_freeze_filter(),
+        ),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=32,
+        log_interval=50,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=4,
         wandb_enabled=False,
     ),
     TrainConfig(
