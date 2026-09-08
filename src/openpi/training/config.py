@@ -1317,6 +1317,84 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
+        # Three-view prompt-v2 low-level policy trained from the pi0.5 base
+        # parameters. The model architecture is unchanged; agentview_left
+        # activates the previously masked third image slot.
+        name="memer_multi_15_prompt_v2_3view",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMultiMemBenchDataConfig(
+            repo_ids=tuple(value.strip() for value in os.getenv("MEMER_MULTI_DATASETS", "").split(",") if value.strip())
+            or (
+                "tm01_200seeds_v061_subtasks_v2",
+                "tm02_200seeds_v061_subtasks_v2",
+                "ts01_200seeds_v061_subtasks_v2",
+                "ts02_200seeds_v061_subtasks_v3",
+                "ts03_200seeds_v061_subtasks_v2",
+                "ts04_200seeds_v061_subtasks_v4",
+                "wa01_200seeds_v061_subtasks_v2",
+                "wa02_200seeds_v061_subtasks_v4",
+                "wa03_200seeds_v061_subtasks_v2",
+                "wa05_200seeds_v061_subtasks_v2",
+                "wr01_200seeds_v061_subtasks_v2",
+                "wr03_200seeds_v061_subtasks_v2",
+                "wr05_200seeds_v061_subtasks_v3",
+                "wr06_200seeds_v061_subtasks_v2",
+                "wx01_200seeds_v061_subtasks_v2",
+            ),
+            assets=AssetsConfig(
+                assets_dir="./assets/memer_multi_15",
+                asset_id="membench_multi_15",
+            ),
+            prompt_source="subtask",
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=2_000,
+            peak_lr=2.5e-5,
+            decay_steps=100_000,
+            decay_lr=2.5e-6,
+        ),
+        optimizer=_optimizer.AdamW(),
+        ema_decay=None,
+        num_train_steps=100_000,
+        batch_size=64,
+        log_interval=10,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=4,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
         # MemER low-level policy: TS01. Preserves the verified WA01 observation/
         # action transforms and replaces the episode-level task prompt with the
         # per-frame subtask prompt. Repo id points at the TS01 subtask dataset.

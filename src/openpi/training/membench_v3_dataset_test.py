@@ -258,3 +258,21 @@ def test_prompt_v2_config_warm_starts_from_previous_params() -> None:
     assert config.lr_schedule.decay_lr == 1e-6
     assert config.num_train_steps == 30_000
     assert config.ema_decay is None
+
+
+def test_prompt_v2_three_view_config_activates_all_cameras() -> None:
+    config = training_config.get_config("memer_multi_15_prompt_v2_3view")
+    repack = config.data.repack_transforms.inputs[0].structure
+
+    assert tuple(repack["images"]) == ("agentview_left", "agentview_right", "eye_in_hand")
+    assert len(config.data.repo_ids) == 15
+    assert config.data.prompt_source == "subtask"
+    assert config.data.assets.assets_dir == "./assets/memer_multi_15"
+    assert config.data.assets.asset_id == "membench_multi_15"
+    assert config.weight_loader.params_path.endswith("pi05_base/params")
+    assert config.lr_schedule.warmup_steps == 2_000
+    assert config.lr_schedule.peak_lr == 2.5e-5
+    assert config.lr_schedule.decay_steps == 100_000
+    assert config.lr_schedule.decay_lr == 2.5e-6
+    assert config.num_train_steps == 100_000
+    assert config.batch_size == 64
