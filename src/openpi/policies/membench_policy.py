@@ -18,32 +18,26 @@ class MemBenchInputs(transforms.DataTransformFn):
     - prompt: language instruction
     """
 
-    REQUIRED_CAMERAS: ClassVar[tuple[str, ...]] = ("agentview_right", "eye_in_hand")
-    OPTIONAL_CAMERAS: ClassVar[tuple[str, ...]] = ("agentview_left",)
+    REQUIRED_CAMERAS: ClassVar[tuple[str, ...]] = ("agentview_left", "agentview_right", "eye_in_hand")
 
     def __call__(self, data: dict) -> dict:
         in_images = data["images"]
-        expected_cameras = self.REQUIRED_CAMERAS + self.OPTIONAL_CAMERAS
+        expected_cameras = self.REQUIRED_CAMERAS
         if unexpected := set(in_images) - set(expected_cameras):
             raise ValueError(f"Unexpected cameras {tuple(sorted(unexpected))}; expected a subset of {expected_cameras}")
         if missing := set(self.REQUIRED_CAMERAS) - set(in_images):
             raise ValueError(f"Missing required cameras {tuple(sorted(missing))}; got {tuple(in_images)}")
 
-        base_image = _to_hwc_uint8(in_images["agentview_right"])
-        wrist_image = _to_hwc_uint8(in_images["eye_in_hand"])
-        has_left_view = "agentview_left" in in_images
-        left_view_image = _to_hwc_uint8(in_images["agentview_left"]) if has_left_view else np.zeros_like(base_image)
-
         inputs = {
             "image": {
-                "base_0_rgb": base_image,
-                "left_wrist_0_rgb": wrist_image,
-                "right_wrist_0_rgb": left_view_image,
+                "base_0_rgb": _to_hwc_uint8(in_images["agentview_left"]),
+                "left_wrist_0_rgb": _to_hwc_uint8(in_images["agentview_right"]),
+                "right_wrist_0_rgb": _to_hwc_uint8(in_images["eye_in_hand"]),
             },
             "image_mask": {
                 "base_0_rgb": np.True_,
                 "left_wrist_0_rgb": np.True_,
-                "right_wrist_0_rgb": np.bool_(has_left_view),
+                "right_wrist_0_rgb": np.True_,
             },
             "state": np.asarray(data["state"], dtype=np.float32),
         }

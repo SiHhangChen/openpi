@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from openpi.policies import membench_policy
 
@@ -16,16 +17,12 @@ def _data(images: dict[str, np.ndarray]) -> dict:
     }
 
 
-def test_two_camera_input_keeps_third_slot_masked() -> None:
-    result = membench_policy.MemBenchInputs()(_data({"agentview_right": _image(1), "eye_in_hand": _image(2)}))
-
-    np.testing.assert_array_equal(result["image"]["base_0_rgb"], _image(1))
-    np.testing.assert_array_equal(result["image"]["left_wrist_0_rgb"], _image(2))
-    np.testing.assert_array_equal(result["image"]["right_wrist_0_rgb"], _image(0))
-    assert not result["image_mask"]["right_wrist_0_rgb"]
+def test_missing_left_camera_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Missing required cameras.*agentview_left"):
+        membench_policy.MemBenchInputs()(_data({"agentview_right": _image(1), "eye_in_hand": _image(2)}))
 
 
-def test_three_camera_input_uses_third_slot() -> None:
+def test_three_camera_input_uses_all_slots() -> None:
     result = membench_policy.MemBenchInputs()(
         _data(
             {
@@ -36,7 +33,7 @@ def test_three_camera_input_uses_third_slot() -> None:
         )
     )
 
-    np.testing.assert_array_equal(result["image"]["base_0_rgb"], _image(1))
-    np.testing.assert_array_equal(result["image"]["left_wrist_0_rgb"], _image(2))
-    np.testing.assert_array_equal(result["image"]["right_wrist_0_rgb"], _image(3))
-    assert result["image_mask"]["right_wrist_0_rgb"]
+    np.testing.assert_array_equal(result["image"]["base_0_rgb"], _image(3))
+    np.testing.assert_array_equal(result["image"]["left_wrist_0_rgb"], _image(1))
+    np.testing.assert_array_equal(result["image"]["right_wrist_0_rgb"], _image(2))
+    assert all(result["image_mask"].values())

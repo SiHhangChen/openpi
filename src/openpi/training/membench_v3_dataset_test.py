@@ -276,3 +276,14 @@ def test_prompt_v2_three_view_config_activates_all_cameras() -> None:
     assert config.lr_schedule.decay_lr == 2.5e-6
     assert config.num_train_steps == 100_000
     assert config.batch_size == 64
+
+
+def test_membench_data_configs_repack_all_required_cameras_by_default() -> None:
+    data_configs = (
+        training_config.LeRobotMemBenchDataConfig(),
+        training_config.LeRobotMultiMemBenchDataConfig(repo_ids=("task_a",)),
+    )
+
+    for data_config in data_configs:
+        repack = data_config.repack_transforms.inputs[0].structure
+        assert tuple(repack["images"]) == ("agentview_left", "agentview_right", "eye_in_hand")

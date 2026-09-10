@@ -495,13 +495,13 @@ class LeRobotMemBenchDataConfig(DataConfigFactory):
     # dimensions before normalization. This lets the reduced state (e.g. without
     # eef pose) be padded back up to exactly the model action dim.
     state_keep_dim: int | None = None
-
     repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
         default=_transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
                     {
                         "images": {
+                            "agentview_left": "observation.images.robot0_agentview_left",
                             "agentview_right": "observation.images.robot0_agentview_right",
                             "eye_in_hand": "observation.images.robot0_eye_in_hand",
                         },
@@ -553,6 +553,7 @@ class LeRobotMultiMemBenchDataConfig(DataConfigFactory):
                 _transforms.RepackTransform(
                     {
                         "images": {
+                            "agentview_left": "observation.images.robot0_agentview_left",
                             "agentview_right": "observation.images.robot0_agentview_right",
                             "eye_in_hand": "observation.images.robot0_eye_in_hand",
                         },
@@ -1057,6 +1058,123 @@ _CONFIGS = [
         log_interval=50,
         save_interval=5_000,
         keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # WA01 three-view full fine-tuning. Train the complete Pi0.5 backbone,
+        # including SigLIP, the VLM, and the action expert, from pi05_base.
+        name="pi05_membench_wa01_3view_full",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wa01_200seeds_v061",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_membench_wa01_3view_full",
+                asset_id="wa01_200seeds_v061",
+            ),
+            state_keep_dim=30,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx.Nothing,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=10_000,
+        keep_period=10_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_membench_multi_15_3view_full",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=256,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMultiMemBenchDataConfig(
+            repo_ids=(
+                "tm01_200seeds_v061",
+                "tm02_200seeds_v061",
+                "ts01_200seeds_v061",
+                "ts02_200seeds_v061",
+                "ts03_200seeds_v061",
+                "ts04_200seeds_v061",
+                "wa01_200seeds_v061",
+                "wa02_200seeds_v062",
+                "wa03_200seeds_v061",
+                "wa05_200seeds_v061",
+                "wr01_200seeds_v061",
+                "wr03_200seeds_v061",
+                "wr07_200seeds_v061",
+                "wr08_200seeds_v061",
+                "wx01_200seeds_v061",
+            ),
+            assets=AssetsConfig(asset_id="membench_all_15_task"),
+            state_keep_dim=30,
+            prompt_source="task",
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx.Nothing,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=2.5e-5,
+            decay_steps=120_000,
+            decay_lr=2.5e-6,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        num_train_steps=120_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=10_000,
+        keep_period=10_000,
         num_workers=32,
         fsdp_devices=1,
         wandb_enabled=False,
@@ -1728,9 +1846,10 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
-        # WA05 three-view full fine-tuning. Keep the data pipeline and training
-        # schedule identical to the LoRA config above, but train every VLM and
-        # action-expert parameter from the pi05 base checkpoint.
+        # WA05 three-view full fine-tuning. Match the Omega WA05 optimization
+        # schedule while training every VLM and action-expert parameter from
+        # the pi05 base checkpoint. Keep the pretrained SigLIP image tower
+        # frozen, matching the Omega WA05 experiment.
         name="pi05_membench_wa05_3view_full",
         model=pi0_config.Pi0Config(
             pi05=True,
@@ -1741,16 +1860,21 @@ _CONFIGS = [
         ),
         data=LeRobotMemBenchDataConfig(
             repo_id="wa05_200seeds_v061",
-            assets=AssetsConfig(assets_dir="./assets/pi05_membench_wa05_3view_full"),
+            assets=AssetsConfig(
+                assets_dir=(
+                    "/data1/shared_workspace/chensihang/ckpts/membench/omega_cond/modulation_full/wa05/59999/assets"
+                ),
+                asset_id="wa05_200seeds_v061",
+            ),
             state_keep_dim=30,
             repack_transforms=_transforms.Group(
                 inputs=[
                     _transforms.RepackTransform(
                         {
                             "images": {
+                                "agentview_left": "observation.images.robot0_agentview_left",
                                 "agentview_right": "observation.images.robot0_agentview_right",
                                 "eye_in_hand": "observation.images.robot0_eye_in_hand",
-                                "agentview_left": "observation.images.robot0_agentview_left",
                             },
                             "state": "observation.state",
                             "actions": "action",
@@ -1762,14 +1886,16 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=None,
         num_train_steps=60_000,
-        batch_size=32,
-        log_interval=50,
-        save_interval=5_000,
-        keep_period=5_000,
-        num_workers=32,
-        fsdp_devices=4,
+        batch_size=48,
+        log_interval=100,
+        save_interval=10_000,
+        keep_period=10_000,
+        num_workers=4,
+        fsdp_devices=1,
         wandb_enabled=False,
     ),
     TrainConfig(
