@@ -65,6 +65,7 @@ class MemBenchV3Dataset:
         repo_id: str,
         *,
         action_horizon: int,
+        sample_stride: int = 1,
         root: str | pathlib.Path | None = None,
         tolerance_s: float = 1e-4,
         video_backend: str | None = None,
@@ -72,6 +73,9 @@ class MemBenchV3Dataset:
         self.repo_id = repo_id
         self.root = pathlib.Path(root) if root is not None else _default_lerobot_root() / repo_id
         self.action_horizon = action_horizon
+        if sample_stride < 1:
+            raise ValueError(f"sample_stride must be positive, got {sample_stride}")
+        self.sample_stride = int(sample_stride)
         self.tolerance_s = tolerance_s
         self.video_backend = video_backend or os.getenv("OPENPI_MEMBENCH_VIDEO_BACKEND", "torchcodec")
 
@@ -100,6 +104,20 @@ class MemBenchV3Dataset:
         self.subtasks = _load_subtask_metadata(self.root / "meta")
         self._load_episode_metadata()
         self._load_frame_data()
+        # Sample anchors independently within each episode. This keeps episode
+        # boundaries intact and prevents the phase of a global ``range`` from
+        # drifting when episode lengths are not multiples of the stride.
+        self._sample_indices = np.concatenate(
+            [
+                np.arange(
+                    episode_from,
+                    episode_from + self._episode_length[episode_index],
+                    self.sample_stride,
+                    dtype=np.int64,
+                )
+                for episode_index, episode_from in sorted(self._episode_from.items())
+            ]
+        )
 
     def _load_episode_metadata(self) -> None:
         episode_files = sorted((self.root / "meta" / "episodes").glob("chunk-*/file-*.parquet"))
@@ -166,14 +184,19 @@ class MemBenchV3Dataset:
                 )
 
     def __len__(self) -> int:
-        return len(self._indices)
+        return len(self._sample_indices)
 
     @property
     def has_subtask_indices(self) -> bool:
         return self._subtask_indices is not None
 
     def __getitem__(self, index: SupportsIndex) -> dict:
-        idx = int(index.__index__())
+        sample_index = int(index.__index__())
+        if sample_index < 0:
+            sample_index += len(self)
+        if sample_index < 0 or sample_index >= len(self):
+            raise IndexError(sample_index)
+        idx = int(self._sample_indices[sample_index])
         episode_index = int(self._episode_indices[idx])
         timestamp = float(self._timestamps[idx])
         action_indices = self._action_indices(idx, episode_index)
@@ -274,6 +297,7 @@ class ConcatMemBenchV3Dataset:
         *,
         action_horizon: int,
         prompt_source: Literal["task", "subtask"] = "subtask",
+        sample_stride: int = 1,
     ):
         if not repo_ids:
             raise ValueError("repo_ids must not be empty")
@@ -281,7 +305,10 @@ class ConcatMemBenchV3Dataset:
             raise ValueError(f"Unsupported prompt source: {prompt_source}")
         self.repo_ids = tuple(repo_ids)
         self.prompt_source = prompt_source
-        self.datasets = tuple(MemBenchV3Dataset(repo_id, action_horizon=action_horizon) for repo_id in self.repo_ids)
+        dataset_kwargs = {} if sample_stride == 1 else {"sample_stride": sample_stride}
+        self.datasets = tuple(
+            MemBenchV3Dataset(repo_id, action_horizon=action_horizon, **dataset_kwargs) for repo_id in self.repo_ids
+        )
         self._ends: list[int] = []
         self._prompt_index_maps: list[dict[int, int]] = []
         total = 0

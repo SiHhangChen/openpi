@@ -104,6 +104,11 @@ class DataConfig:
     # LeRobot dataset is using different keys to represent the action.
     action_sequence_keys: Sequence[str] = ("actions",)
 
+    # Keep one observation/action-chunk anchor every N frames. Sampling is
+    # restarted at frame zero for each episode; the action chunk itself remains
+    # contiguous at the original dataset frame rate.
+    sample_stride: int = 1
+
     # If true, will use the LeRobot dataset task to define the prompt.
     prompt_from_task: bool = False
     # If true, will use the per-frame MemER subtask to define the prompt.
@@ -119,6 +124,8 @@ class DataConfig:
     def __post_init__(self) -> None:
         if self.prompt_from_task and self.prompt_from_subtask:
             raise ValueError("prompt_from_task and prompt_from_subtask are mutually exclusive")
+        if self.sample_stride < 1:
+            raise ValueError(f"sample_stride must be positive, got {self.sample_stride}")
 
 
 class GroupFactory(Protocol):
@@ -515,6 +522,7 @@ class LeRobotMemBenchDataConfig(DataConfigFactory):
     )
 
     action_sequence_keys: Sequence[str] = ("action",)
+    sample_stride: int = 1
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -534,6 +542,7 @@ class LeRobotMemBenchDataConfig(DataConfigFactory):
             data_transforms=data_transforms,
             model_transforms=model_transforms,
             action_sequence_keys=self.action_sequence_keys,
+            sample_stride=self.sample_stride,
         )
 
 
@@ -1101,6 +1110,109 @@ _CONFIGS = [
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
         freeze_filter=nnx.Nothing,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        num_train_steps=60_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=10_000,
+        keep_period=10_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Pure Pi0.5 WR07 baseline aligned with the WA01 three-view full
+        # fine-tune. Only the task dataset/assets and episode-local anchor
+        # sampling stride differ.
+        name="pi05_membench_wr07_3view_full_stride20",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wr07_200seeds_v061",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_membench_wr07_3view_full_stride20",
+                asset_id="wr07_200seeds_v061",
+            ),
+            state_keep_dim=30,
+            sample_stride=20,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx.Nothing,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        num_train_steps=10_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Controlled counterpart to pi05_membench_wa01_3view_full: keep the
+        # model, optimization, cameras, and normalization fixed while replacing
+        # the episode-level task instruction with the per-frame subtask prompt.
+        name="pi05_membench_wa01_3view_full_subtask",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wa01_200seeds_v061_subtasks_v3",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_membench_wa01_3view_full",
+                asset_id="wa01_200seeds_v061",
+            ),
+            state_keep_dim=30,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_subtask=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=None,
         num_train_steps=60_000,

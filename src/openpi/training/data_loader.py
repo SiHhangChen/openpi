@@ -161,6 +161,7 @@ def create_torch_dataset(
             data_config.repo_ids,
             action_horizon=action_horizon,
             prompt_source=prompt_source,
+            sample_stride=data_config.sample_stride,
         )
         if data_config.prompt_from_subtask:
             if dataset.subtasks is None:
@@ -171,7 +172,12 @@ def create_torch_dataset(
         return dataset
 
     if membench_v3_dataset.is_membench_v3_dataset(repo_id):
-        dataset = membench_v3_dataset.MemBenchV3Dataset(repo_id, action_horizon=action_horizon)
+        dataset_kwargs = {} if data_config.sample_stride == 1 else {"sample_stride": data_config.sample_stride}
+        dataset = membench_v3_dataset.MemBenchV3Dataset(
+            repo_id,
+            action_horizon=action_horizon,
+            **dataset_kwargs,
+        )
         if data_config.prompt_from_subtask:
             if dataset.subtasks is None:
                 raise ValueError(f'MemBench dataset "{repo_id}" has no subtask metadata')

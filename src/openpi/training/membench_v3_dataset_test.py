@@ -278,6 +278,67 @@ def test_prompt_v2_three_view_config_activates_all_cameras() -> None:
     assert config.batch_size == 64
 
 
+def test_wa01_three_view_subtask_config_is_a_controlled_prompt_ablation() -> None:
+    task_config = training_config.get_config("pi05_membench_wa01_3view_full")
+    subtask_config = training_config.get_config("pi05_membench_wa01_3view_full_subtask")
+
+    assert dataclasses.replace(subtask_config, name=task_config.name, data=task_config.data) == task_config
+    assert (
+        dataclasses.replace(
+            subtask_config.data,
+            repo_id=task_config.data.repo_id,
+            base_config=task_config.data.base_config,
+        )
+        == task_config.data
+    )
+    assert subtask_config.data.repo_id == "wa01_200seeds_v061_subtasks_v3"
+    assert subtask_config.data.assets.assets_dir == "./assets/pi05_membench_wa01_3view_full"
+    assert subtask_config.data.assets.asset_id == "wa01_200seeds_v061"
+    assert subtask_config.data.base_config.prompt_from_subtask
+    assert not subtask_config.data.base_config.prompt_from_task
+
+
+def test_wr07_stride20_config_matches_wa01_full_training_contract() -> None:
+    wa01 = training_config.get_config("pi05_membench_wa01_3view_full")
+    wr07 = training_config.get_config("pi05_membench_wr07_3view_full_stride20")
+
+    assert wr07.model == wa01.model
+    assert wr07.weight_loader == wa01.weight_loader
+    assert wr07.freeze_filter == wa01.freeze_filter
+    assert wr07.lr_schedule == wa01.lr_schedule
+    assert wr07.optimizer == wa01.optimizer
+    assert wr07.ema_decay == wa01.ema_decay
+    assert (wr07.num_train_steps, wr07.batch_size, wr07.num_workers, wr07.fsdp_devices) == (10_000, 48, 32, 1)
+    assert (wr07.log_interval, wr07.save_interval, wr07.keep_period) == (100, 5_000, 5_000)
+    assert wr07.data.repo_id == "wr07_200seeds_v061"
+    assert wr07.data.sample_stride == 20
+    assert wr07.data.state_keep_dim == wa01.data.state_keep_dim == 30
+    assert wr07.data.repack_transforms == wa01.data.repack_transforms
+    assert wr07.data.base_config.prompt_from_task
+
+
+def test_membench_sample_stride_keeps_episode_local_anchors_and_contiguous_actions() -> None:
+    dataset = object.__new__(_REAL_MEMBENCH_DATASET)
+    dataset._sample_indices = np.array([0, 3, 6, 7, 10], dtype=np.int64)  # noqa: SLF001
+    dataset._episode_from = {0: 0, 1: 7}  # noqa: SLF001
+    dataset._episode_length = {0: 7, 1: 5}  # noqa: SLF001
+    dataset._episode_indices = np.array([0] * 7 + [1] * 5)  # noqa: SLF001
+    dataset._timestamps = np.arange(12, dtype=np.float64) / 20  # noqa: SLF001
+    dataset._states = np.arange(12, dtype=np.float32)[:, None]  # noqa: SLF001
+    dataset._actions = np.arange(12, dtype=np.float32)[:, None]  # noqa: SLF001
+    dataset._task_indices = np.zeros(12, dtype=np.int64)  # noqa: SLF001
+    dataset._subtask_indices = None  # noqa: SLF001
+    dataset._indices = np.arange(12, dtype=np.int64)  # noqa: SLF001
+    dataset.camera_keys = []
+    dataset.action_horizon = 4
+
+    assert len(dataset) == 5
+    assert [dataset[index]["index"] for index in range(len(dataset))] == [0, 3, 6, 7, 10]
+    np.testing.assert_array_equal(dataset[1]["action"].squeeze(-1), np.array([3, 4, 5, 6]))
+    np.testing.assert_array_equal(dataset[3]["action"].squeeze(-1), np.array([7, 8, 9, 10]))
+    np.testing.assert_array_equal(dataset[-1]["action"].squeeze(-1), np.array([10, 11, 11, 11]))
+
+
 def test_membench_data_configs_repack_all_required_cameras_by_default() -> None:
     data_configs = (
         training_config.LeRobotMemBenchDataConfig(),
