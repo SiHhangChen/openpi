@@ -1174,6 +1174,169 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
+        # Warm restart of pi05_membench_wr07_3view_full_stride20 from the
+        # step-5000 params checkpoint (the original run was killed before the
+        # async train_state save completed, so native --resume is impossible).
+        # AdamW moments are lost; warmup is shortened to 200 steps to re-estimate
+        # them without pushing the model far from the step-5000 weights.
+        name="pi05_membench_wr07_3view_full_stride20_warm5000",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wr07_200seeds_v061",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_membench_wr07_3view_full_stride20",
+                asset_id="wr07_200seeds_v061",
+            ),
+            state_keep_dim=30,
+            sample_stride=20,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            _local_trained_params(
+                "pi05_membench_wr07_3view_full_stride20", "wr07_3view_full_s20_bs48_10k_g0123", 5000
+            )
+        ),
+        freeze_filter=nnx.Nothing,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=200, decay_steps=5_000),
+        ema_decay=None,
+        num_train_steps=5_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # WR07 full fine-tune with anchor sampling stride 10 and a 30k-step
+        # schedule. Replaces the aborted stride-20 run: denser anchors
+        # (~2x samples) and a longer schedule for a stronger baseline.
+        name="pi05_membench_wr07_3view_full_stride10_30k",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wr07_200seeds_v061",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_membench_wr07_3view_full_stride20",
+                asset_id="wr07_200seeds_v061",
+            ),
+            state_keep_dim=30,
+            sample_stride=10,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx.Nothing,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=30_000),
+        ema_decay=None,
+        num_train_steps=30_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # WR08 final three-view fine-tune from pi05_base with SigLIP frozen.
+        name="pi05_membench_wr08_3view_full_stride10_10k",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wr08-final",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_membench_wr08_3view_full_stride10_10k",
+                asset_id="wr08-final",
+            ),
+            state_keep_dim=30,
+            sample_stride=10,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_left": "observation.images.robot0_agentview_left",
+                                "agentview_right": "observation.images.robot0_agentview_right",
+                                "eye_in_hand": "observation.images.robot0_eye_in_hand",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=10_000),
+        ema_decay=None,
+        num_train_steps=10_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
         # Controlled counterpart to pi05_membench_wa01_3view_full: keep the
         # model, optimization, cameras, and normalization fixed while replacing
         # the episode-level task instruction with the per-frame subtask prompt.
