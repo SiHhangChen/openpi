@@ -1219,7 +1219,7 @@ _CONFIGS = [
                 "pi05_membench_wr07_3view_full_stride20", "wr07_3view_full_s20_bs48_10k_g0123", 5000
             )
         ),
-        freeze_filter=nnx.Nothing,
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=200, decay_steps=5_000),
         ema_decay=None,
@@ -1233,7 +1233,7 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
-        # WR07 full fine-tune with anchor sampling stride 10 and a 30k-step
+        # WR07 fine-tune with frozen SigLIP, anchor stride 10, and a 30k-step
         # schedule. Replaces the aborted stride-20 run: denser anchors
         # (~2x samples) and a longer schedule for a stronger baseline.
         name="pi05_membench_wr07_3view_full_stride10_30k",
@@ -1272,7 +1272,7 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
-        freeze_filter=nnx.Nothing,
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=30_000),
         ema_decay=None,
