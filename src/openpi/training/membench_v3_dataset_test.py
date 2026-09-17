@@ -317,6 +317,41 @@ def test_wr07_stride20_config_matches_wa01_full_training_contract() -> None:
     assert wr07.data.base_config.prompt_from_task
 
 
+@pytest.mark.parametrize("task", ["wr01", "wa01", "wa05", "ts02", "ts03", "wx01", "tm01", "tm02"])
+def test_final_task_configs_match_wr08_training_contract(task: str) -> None:
+    reference = training_config.get_config("pi05_membench_wr08_3view_full_stride10_10k")
+    name = f"pi05_membench_{task}_3view_full_stride10_10k"
+    config = training_config.get_config(name)
+
+    assert config.data.repo_id == f"{task}-final"
+    assert config.data.assets.assets_dir == f"./assets/{name}"
+    assert config.data.assets.asset_id == f"{task}-final"
+    assert dataclasses.replace(config, name=reference.name, data=reference.data) == reference
+    assert (
+        dataclasses.replace(config.data, repo_id=reference.data.repo_id, assets=reference.data.assets)
+        == reference.data
+    )
+    assert config.freeze_filter(("PaliGemma", "img", "kernel"), None)
+    assert not config.freeze_filter(("PaliGemma", "llm", "kernel"), None)
+    assert not config.freeze_filter(("PaliGemma", "llm", "q_einsum_1", "kernel"), None)
+
+
+@pytest.mark.parametrize("task", ["wr08", "wr01", "wa01", "wa05", "ts02", "ts03", "wx01", "tm01", "tm02"])
+def test_norm_stats_alias_uses_dense_anchors_and_shared_training_assets(task: str) -> None:
+    training = training_config.get_config(f"pi05_membench_{task}_3view_full_stride10_10k")
+    stats = training_config.get_config(f"pi05_membench_{task}_3view_full_stride1_normstats")
+
+    assert training.data.sample_stride == 10
+    assert stats.data.sample_stride == 1
+    assert stats.model.action_horizon == training.model.action_horizon == 50
+    assert stats.batch_size == training.batch_size == 48
+    assert stats.assets_dirs == training.assets_dirs
+    assert stats.data.assets == training.data.assets
+    assert stats.assets_dirs / stats.data.repo_id == training.assets_dirs / training.data.assets.asset_id
+    assert dataclasses.replace(stats, data=training.data) == training
+    assert dataclasses.replace(stats.data, sample_stride=10) == training.data
+
+
 def test_membench_sample_stride_keeps_episode_local_anchors_and_contiguous_actions() -> None:
     dataset = object.__new__(_REAL_MEMBENCH_DATASET)
     dataset._sample_indices = np.array([0, 3, 6, 7, 10], dtype=np.int64)  # noqa: SLF001
