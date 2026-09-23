@@ -54,7 +54,12 @@ class MemBenchInputs(transforms.DataTransformFn):
 class MemBenchOutputs(transforms.DataTransformFn):
     """Outputs for MobileMemBench-style policies."""
 
-    action_dim: int
+    # Number of dataset action dimensions to expose to the runtime.  Historical
+    # MemBench datasets contain a 13-dimensional control vector, while the
+    # real-robot WR07 recording contains 14 arm joints plus 3 base velocities.
+    # The model still predicts its fixed 32-dimensional Pi0.5 action vector;
+    # this transform removes the zero-padded tail on the way back out.
+    action_dim: int = 13
 
     def __call__(self, data: dict) -> dict:
         if "actions" not in data:

@@ -502,6 +502,11 @@ class LeRobotMemBenchDataConfig(DataConfigFactory):
     # dimensions before normalization. This lets the reduced state (e.g. without
     # eef pose) be padded back up to exactly the model action dim.
     state_keep_dim: int | None = None
+    # Number of action dimensions exposed by the runtime output transform.
+    # Existing MemBench recordings use 13; real-robot WR07 has 17 (14 joint
+    # positions and 3 mobile-base velocities). Training still consumes the
+    # source action vector and pads it to the model action dimension.
+    action_output_dim: int = 13
     repack_transforms: tyro.conf.Suppress[_transforms.Group] = dataclasses.field(
         default=_transforms.Group(
             inputs=[
@@ -532,7 +537,7 @@ class LeRobotMemBenchDataConfig(DataConfigFactory):
         data_inputs.append(membench_policy.MemBenchInputs())
         data_transforms = _transforms.Group(
             inputs=data_inputs,  # type: ignore[arg-type]
-            outputs=[membench_policy.MemBenchOutputs(action_dim=13)],
+            outputs=[membench_policy.MemBenchOutputs(action_dim=self.action_output_dim)],
         )
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
 
@@ -1332,6 +1337,129 @@ _CONFIGS = [
         log_interval=100,
         save_interval=5_000,
         keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # Real-robot WR07 recording (LeRobot v3, cobot_magic). The dataset is
+        # intentionally kept as a separate config: its cameras are named
+        # ``left/front/right``, its state/action vectors are 17-dimensional,
+        # and it has no usable task-text column. Set HF_LEROBOT_HOME to the
+        # directory containing ``wr07_lerobot_v3`` before launching.
+        name="pi05_real_robot_wr07_v3",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wr07_lerobot_v3",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_real_robot_wr07_v3",
+                asset_id="wr07_lerobot_v3",
+            ),
+            # 14 arm joints + 3 mobile-base velocity dimensions.
+            state_keep_dim=17,
+            action_output_dim=17,
+            # At 30 Hz this gives roughly 3 anchor observations per second,
+            # while retaining a contiguous 50-frame (1.67 s) action chunk.
+            sample_stride=10,
+            default_prompt=(
+                "Remember the color of the container holding the movable item. "
+                "Move the movable item from the source container to the "
+                "matching-color container on the opposite side."
+            ),
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                # Front is the base view; left/right are the
+                                # two arm-side views in the real recording.
+                                "agentview_left": "observation.images.front",
+                                "agentview_right": "observation.images.left",
+                                "eye_in_hand": "observation.images.right",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                        }
+                    )
+                ]
+            ),
+            # The recording's task table contains only a null placeholder, so
+            # inject the fixed WR07 instruction above instead of reading a
+            # per-frame task prompt.
+            base_config=DataConfig(prompt_from_task=False),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        # Keep the SigLIP tower fixed for this relatively small real-world
+        # dataset while adapting the VLM and action expert.
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1000, decay_steps=30_000),
+        ema_decay=None,
+        num_train_steps=30_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=10_000,
+        keep_period=10_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # The three annotation colors are episode-level control prompts. The
+        # derived dataset links the real recording and adds only subtask sidecars.
+        name="pi05_real_robot_wr07_v3_subgoal",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wr07_lerobot_v3_subtasks",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_real_robot_wr07_v3",
+                asset_id="wr07_lerobot_v3",
+            ),
+            state_keep_dim=17,
+            action_output_dim=17,
+            sample_stride=10,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "agentview_left": "observation.images.front",
+                                "agentview_right": "observation.images.left",
+                                "eye_in_hand": "observation.images.right",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(prompt_from_subtask=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1000, decay_steps=30_000),
+        ema_decay=None,
+        num_train_steps=30_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=10_000,
+        keep_period=10_000,
         num_workers=32,
         fsdp_devices=1,
         wandb_enabled=False,

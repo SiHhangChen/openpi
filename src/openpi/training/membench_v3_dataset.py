@@ -2,6 +2,7 @@ import bisect
 from collections.abc import Sequence
 import csv
 import json
+import logging
 import os
 import pathlib
 import re
@@ -93,7 +94,21 @@ class MemBenchV3Dataset:
         # Unused depth/left cameras are otherwise decoded for every frame, which is wasteful.
         if allowed := os.getenv("OPENPI_MEMBENCH_CAMERA_KEYS"):
             allowed_keys = {key.strip() for key in allowed.split(",") if key.strip()}
-            self.camera_keys = [key for key in self.camera_keys if key in allowed_keys]
+            filtered_camera_keys = [key for key in self.camera_keys if key in allowed_keys]
+            if filtered_camera_keys:
+                self.camera_keys = filtered_camera_keys
+            else:
+                # A process-level allowlist from another dataset should not
+                # silently remove every camera from a recording whose camera
+                # naming scheme is different (e.g. real-robot ``left/front/
+                # right`` versus synthetic ``robot0_*``). Decode all available
+                # cameras and let the config's repack transform select them.
+                logging.warning(
+                    "OPENPI_MEMBENCH_CAMERA_KEYS=%s matched no cameras in %s; using all cameras %s",
+                    allowed,
+                    self.root,
+                    self.camera_keys,
+                )
         self._image_shapes = {
             key: tuple(self.info["features"][key]["shape"])
             for key in self.camera_keys
@@ -383,7 +398,16 @@ def _default_lerobot_root() -> pathlib.Path:
 
 def _load_tasks(tasks_path: pathlib.Path) -> dict[int, str]:
     tasks = pl.read_parquet(tasks_path)
-    return {int(row["task_index"]): str(row["task"]) for row in tasks.iter_rows(named=True)}
+    # LeRobot v3 normally stores the task text in a ``task`` column.  Some
+    # native real-robot recordings were written by pandas with the task text
+    # as the index instead (``__index_level_0__``), so accepting that layout
+    # keeps the v3 reader usable without rewriting the dataset.  The fallback
+    # is only used for metadata inspection; callers that need prompts should
+    # inject a configured default prompt when the recording has no task text.
+    task_column = "task" if "task" in tasks.columns else "__index_level_0__"
+    if task_column not in tasks.columns:
+        raise ValueError(f"Task metadata {tasks_path} has no task text column")
+    return {int(row["task_index"]): str(row[task_column]) for row in tasks.iter_rows(named=True)}
 
 
 def _load_subtasks(subtasks_path: pathlib.Path) -> dict[int, str]:
