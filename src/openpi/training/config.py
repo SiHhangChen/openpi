@@ -656,6 +656,8 @@ class TrainConfig:
     seed: int = 42
     # Global batch size.
     batch_size: int = 32
+    # Split each global batch into sequential microbatches before one JAX optimizer update.
+    gradient_accumulation_steps: int = 1
     # Number of workers to use for the data loader. Increasing this number will speed up data loading but
     # will increase memory and CPU usage.
     num_workers: int = 2
@@ -706,6 +708,8 @@ class TrainConfig:
     def __post_init__(self) -> None:
         if self.resume and self.overwrite:
             raise ValueError("Cannot resume and overwrite at the same time.")
+        if self.gradient_accumulation_steps < 1 or self.batch_size % self.gradient_accumulation_steps:
+            raise ValueError("Global batch size must be divisible by positive gradient_accumulation_steps.")
 
 
 # Use `get_config` if you need to get a config by name in your code.
@@ -1535,6 +1539,8 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
+        # Keep the historical name/asset path to resume the existing experiment
+        # to 30k updates with its original 10k learning-rate decay.
         name="pi05_membench_wa05_3view_full_stride10_10k",
         model=pi0_config.Pi0Config(
             pi05=True,
@@ -1559,7 +1565,7 @@ _CONFIGS = [
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=10_000),
         ema_decay=None,
-        num_train_steps=10_000,
+        num_train_steps=30_000,
         batch_size=48,
         log_interval=100,
         save_interval=5_000,
@@ -1569,7 +1575,7 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
-        name="pi05_membench_ts02_3view_full_stride10_10k",
+        name="pi05_membench_ts02_3view_full_stride10_30k",
         model=pi0_config.Pi0Config(
             pi05=True,
             action_dim=32,
@@ -1581,7 +1587,7 @@ _CONFIGS = [
         data=LeRobotMemBenchDataConfig(
             repo_id="ts02-final",
             assets=AssetsConfig(
-                assets_dir="./assets/pi05_membench_ts02_3view_full_stride10_10k",
+                assets_dir="./assets/pi05_membench_ts02_3view_full_stride10_30k",
                 asset_id="ts02-final",
             ),
             state_keep_dim=30,
@@ -1591,9 +1597,43 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
         freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
-        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=10_000),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=30_000),
         ema_decay=None,
-        num_train_steps=10_000,
+        num_train_steps=30_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        name="pi05_membench_wr11_3view_full_stride10_40k",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wr11-final",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_membench_wr11_3view_full_stride10_40k",
+                asset_id="wr11-final",
+            ),
+            state_keep_dim=30,
+            sample_stride=10,
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=40_000),
+        ema_decay=None,
+        num_train_steps=40_000,
         batch_size=48,
         log_interval=100,
         save_interval=5_000,
@@ -1625,7 +1665,7 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
         freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
-        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=10_000),
+        # lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=10_000),
         ema_decay=None,
         num_train_steps=10_000,
         batch_size=48,
@@ -1637,7 +1677,7 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
-        name="pi05_membench_wx01_3view_full_stride10_10k",
+        name="pi05_membench_wx01_3view_full_stride10_30k",
         model=pi0_config.Pi0Config(
             pi05=True,
             action_dim=32,
@@ -1649,7 +1689,7 @@ _CONFIGS = [
         data=LeRobotMemBenchDataConfig(
             repo_id="wx01-final",
             assets=AssetsConfig(
-                assets_dir="./assets/pi05_membench_wx01_3view_full_stride10_10k",
+                assets_dir="./assets/pi05_membench_wx01_3view_full_stride10_30k",
                 asset_id="wx01-final",
             ),
             state_keep_dim=30,
@@ -1659,9 +1699,9 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
         freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
-        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=10_000),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=30_000),
         ema_decay=None,
-        num_train_steps=10_000,
+        num_train_steps=30_000,
         batch_size=48,
         log_interval=100,
         save_interval=5_000,
@@ -1710,7 +1750,7 @@ _CONFIGS = [
             pi05=True,
             action_dim=32,
             action_horizon=50,
-            max_token_len=200,
+            max_token_len=256,
             paligemma_variant="gemma_2b",
             action_expert_variant="gemma_300m",
         ),
@@ -2960,7 +3000,19 @@ _CONFIGS_DICT = {config.name: config for config in _CONFIGS}
 # Statistics-only aliases use dense anchors but retain the training config name
 # so the unmodified official script writes into the training assets directory.
 _NORM_STATS_CONFIGS = {}
-for _task in ("wr08", "wr01", "wa01", "wa05", "ts02", "ts03", "wx01", "tm01", "tm02"):
+for _config_name in (
+    "pi05_membench_ts02_3view_full_stride10_30k",
+    "pi05_membench_wr11_3view_full_stride10_40k",
+    "pi05_membench_wx01_3view_full_stride10_30k",
+):
+    _training_config = _CONFIGS_DICT[_config_name]
+    _NORM_STATS_CONFIGS[f"{_training_config.name}_normstats"] = dataclasses.replace(
+        _training_config,
+        data=dataclasses.replace(_training_config.data, sample_stride=1),
+        batch_size=256,
+        num_workers=0,
+    )
+for _task in ("wr08", "wr01", "wa01", "wa05", "ts03", "tm01", "tm02"):
     _training_config = _CONFIGS_DICT[f"pi05_membench_{_task}_3view_full_stride10_10k"]
     _NORM_STATS_CONFIGS[f"pi05_membench_{_task}_3view_full_stride1_normstats"] = dataclasses.replace(
         _training_config,
