@@ -1711,6 +1711,76 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
+        # TM05 final: independent three-view baseline initialized from pi05_base.
+        name="pi05_membench_tm05_3view_full_stride10_30k",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=200,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="tm05-final",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_membench_tm05_3view_full_stride10_30k",
+                asset_id="tm05-final",
+            ),
+            state_keep_dim=30,
+            sample_stride=10,
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=30_000),
+        ema_decay=None,
+        num_train_steps=30_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
+        # WR12 final: independent three-view baseline initialized from pi05_base.
+        name="pi05_membench_wr12_3view_full_stride10_30k",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            max_token_len=256,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=LeRobotMemBenchDataConfig(
+            repo_id="wr12-final",
+            assets=AssetsConfig(
+                assets_dir="./assets/pi05_membench_wr12_3view_full_stride10_30k",
+                asset_id="wr12-final",
+            ),
+            state_keep_dim=30,
+            sample_stride=10,
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(_local_pretrain_params("pi05_base")),
+        freeze_filter=nnx_utils.PathRegex(".*PaliGemma/img.*"),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, decay_steps=30_000),
+        ema_decay=None,
+        num_train_steps=30_000,
+        batch_size=48,
+        log_interval=100,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
+        fsdp_devices=1,
+        wandb_enabled=False,
+    ),
+    TrainConfig(
         name="pi05_membench_tm01_3view_full_stride10_10k",
         model=pi0_config.Pi0Config(
             pi05=True,
@@ -3004,6 +3074,8 @@ for _config_name in (
     "pi05_membench_ts02_3view_full_stride10_30k",
     "pi05_membench_wr11_3view_full_stride10_40k",
     "pi05_membench_wx01_3view_full_stride10_30k",
+    "pi05_membench_tm05_3view_full_stride10_30k",
+    "pi05_membench_wr12_3view_full_stride10_30k",
 ):
     _training_config = _CONFIGS_DICT[_config_name]
     _NORM_STATS_CONFIGS[f"{_training_config.name}_normstats"] = dataclasses.replace(
