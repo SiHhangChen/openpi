@@ -65,6 +65,23 @@ class Policy(BasePolicy):
             self._rng = rng or jax.random.key(0)
 
     @override
+    def reset(self) -> None:
+        # The default ``BasePolicy.reset`` is a no-op; kept explicit so callers
+        # can rely on it without an introspection fallback.
+        return
+
+    def reseed(self, seed: int) -> None:
+        """Reset the sampling RNG from an integer seed.
+
+        JAX models restart the ``jax.random`` key stream used for flow-matching
+        noise; PyTorch models reseed the global torch generators (CPU and CUDA).
+        """
+        if self._is_pytorch_model:
+            torch.manual_seed(seed)
+        else:
+            self._rng = jax.random.key(seed)
+
+    @override
     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)
